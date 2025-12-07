@@ -6,6 +6,7 @@
 #include "llama-model-loader.h"
 #include "llama-model-saver.h"
 #include "llama-model.h"
+#include "llama-size-estimator.h"
 
 #include "ggml.h"
 #include "ggml-backend.h"
@@ -16,6 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <list>
 
 #if defined(_MSC_VER)
 #pragma warning(disable: 4244 4267) // possible loss of data
@@ -139,6 +141,100 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
         if (params.vocab_only) {
             LLAMA_LOG_INFO("%s: vocab only - skipping tensors\n", __func__);
             return 0;
+        }
+
+        // Auto-optimize GPU layer offloading if n_gpu_layers == -2
+        if (params.n_gpu_layers == -2 && !model.devices.empty()) {
+            LLAMA_LOG_INFO("%s: auto-optimizing GPU layer offloading...\n", __func__);
+
+            try {
+                // Estimate model sizes
+                auto size_estimate = llama_size_estimator::estimate_model_sizes(ml);
+
+                // Estimate KV cache size (need to assume context params)
+                // TODO: ideally we'd get these from context params, but they're not available yet
+                // Using conservative estimates for now
+                uint32_t est_n_ctx = 2048; // Conservative default
+                uint32_t est_n_seq_max = 1;
+                ggml_type type_k = GGML_TYPE_F16;
+                ggml_type type_v = GGML_TYPE_F16;
+
+                size_t kv_cache_size = llama_size_estimator::estimate_kv_cache_size(
+                    model.hparams, est_n_ctx, est_n_seq_max, type_k, type_v);
+
+                // Estimate overhead
+                size_t overhead = llama_size_estimator::estimate_overhead(model.hparams, est_n_ctx);
+
+                // Query available VRAM on primary GPU
+                size_t available_vram = 0;
+                if (!model.devices.empty()) {
+                    size_t free_mem, total_mem;
+                    ggml_backend_dev_memory(model.devices[0], &free_mem, &total_mem);
+                    // Use 95% of free memory to leave some headroom
+                    available_vram = (free_mem * 95) / 100;
+                }
+
+                // Calculate optimal configuration
+                int n_cpu_moe = 0;
+                int optimal_layers = llama_size_estimator::calculate_optimal_gpu_layers(
+                    size_estimate, kv_cache_size, overhead, available_vram, n_cpu_moe);
+
+                // Apply the optimization to both function param and model's param
+                params.n_gpu_layers = optimal_layers;
+                model.params.n_gpu_layers = optimal_layers;
+
+                // Apply MoE CPU offloading if recommended
+                if (n_cpu_moe > 0) {
+                    // Keep strings alive by storing them in a static list
+                    static std::list<std::string> auto_moe_overrides;
+                    static std::vector<llama_model_tensor_buft_override> override_vec;
+
+                    // Count existing overrides (NULL-terminated array)
+                    int existing_count = 0;
+                    if (params.tensor_buft_overrides) {
+                        while (params.tensor_buft_overrides[existing_count].pattern != nullptr) {
+                            existing_count++;
+                        }
+                    }
+
+                    // Build new override list
+                    override_vec.clear();
+
+                    // Copy existing non-MoE overrides
+                    for (int i = 0; i < existing_count; ++i) {
+                        std::string pattern(params.tensor_buft_overrides[i].pattern);
+                        if (pattern.find("ffn_") == std::string::npos ||
+                            pattern.find("exps") == std::string::npos) {
+                            override_vec.push_back(params.tensor_buft_overrides[i]);
+                        }
+                    }
+
+                    // Add MoE overrides for layers 0..(n_cpu_moe-1)
+                    for (int i = 0; i < n_cpu_moe; ++i) {
+                        char buf[128];
+                        snprintf(buf, sizeof(buf), "blk\\.%d\\.ffn_(up|down|gate)_(ch|)exps", i);
+                        auto_moe_overrides.push_back(std::string(buf));
+                        override_vec.push_back({auto_moe_overrides.back().c_str(), ggml_backend_cpu_buffer_type()});
+                    }
+
+                    // Add NULL terminator
+                    override_vec.push_back({nullptr, nullptr});
+
+                    // Update params (note: this becomes invalid if override_vec is modified/destroyed)
+                    params.tensor_buft_overrides = override_vec.data();
+
+                    // Recreate model loader with updated tensor overrides
+                    ml = llama_model_loader(fname, splits, params.use_mmap, params.check_tensors, params.kv_overrides, params.tensor_buft_overrides);
+
+                    LLAMA_LOG_INFO("%s: auto-optimization result: n_gpu_layers = %d, n_cpu_moe = %d\n",
+                        __func__, optimal_layers, n_cpu_moe);
+                } else {
+                    LLAMA_LOG_INFO("%s: auto-optimization result: n_gpu_layers = %d\n", __func__, optimal_layers);
+                }
+            } catch (const std::exception & e) {
+                LLAMA_LOG_WARN("%s: auto-optimization failed: %s, using default\n", __func__, e.what());
+                params.n_gpu_layers = 999; // Fall back to default (offload all)
+            }
         }
 
         if (!model.load_tensors(ml)) {

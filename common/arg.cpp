@@ -1243,6 +1243,13 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_MAIN, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_MTMD, LLAMA_EXAMPLE_EMBEDDING, LLAMA_EXAMPLE_RETRIEVAL, LLAMA_EXAMPLE_PERPLEXITY}));
     add_opt(common_arg(
+        {"--dry-run"},
+        "exit after loading model (useful for testing -ngl auto)",
+        [](common_params & params) {
+            params.dry_run = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_MAIN}));
+    add_opt(common_arg(
         {"--spm-infill"},
         string_format(
             "use Suffix/Prefix/Middle pattern for infill (instead of Prefix/Suffix/Middle) as some models prefer this. (default: %s)",
@@ -1968,10 +1975,18 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     ).set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_N_CPU_MOE_DRAFT"));
     add_opt(common_arg(
         {"-ngl", "--gpu-layers", "--n-gpu-layers"}, "N",
-        string_format("max. number of layers to store in VRAM (default: %d)", params.n_gpu_layers),
-        [](common_params & params, int value) {
-            params.n_gpu_layers = value;
-            if (!llama_supports_gpu_offload()) {
+        string_format("max. number of layers to store in VRAM (default: %d, use -2 for auto)", params.n_gpu_layers),
+        [](common_params & params, const std::string & value) {
+            if (value == "auto" || value == "AUTO") {
+                params.n_gpu_layers = -2; // Special value for auto-optimization
+            } else {
+                try {
+                    params.n_gpu_layers = std::stoi(value);
+                } catch (...) {
+                    throw std::invalid_argument("invalid value for --n-gpu-layers");
+                }
+            }
+            if (!llama_supports_gpu_offload() && params.n_gpu_layers > 0) {
                 fprintf(stderr, "warning: no usable GPU found, --gpu-layers option will be ignored\n");
                 fprintf(stderr, "warning: one possible reason is that llama.cpp was compiled without GPU support\n");
                 fprintf(stderr, "warning: consult docs/build.md for compilation instructions\n");

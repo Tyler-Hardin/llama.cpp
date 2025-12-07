@@ -1203,6 +1203,11 @@ struct common_init_result common_init_from_params(common_params & params) {
         params.sampling.dry_penalty_last_n = llama_n_ctx(lctx);
     }
 
+    if (params.dry_run) {
+        LOG_INF("%s: dry-run mode enabled, exiting before inference\n", __func__);
+        return iparams;
+    }
+
     if (params.warmup) {
         LOG_WRN("%s: warming up the model with an empty run - please wait ... (--no-warmup to disable)\n", __func__);
 
