@@ -287,6 +287,13 @@ extern "C" {
         const struct llama_model_tensor_buft_override * tensor_buft_overrides;
 
         int32_t n_gpu_layers; // number of layers to store in VRAM
+        // Context size hint for auto-optimization of n_gpu_layers (n_gpu_layers=999 auto mode)
+        // This is a copy from llama_context_params for KV cache estimation only
+        // The authoritative n_ctx is in llama_context_params - this is not used after model loading
+        int32_t n_ctx;
+        // Safety factor for auto-optimization (fraction of free VRAM to use, 0.0 < auto_safety_factor <= 1.0)
+        // Only used when n_gpu_layers == -2 (auto mode)
+        float auto_safety_factor;
         enum llama_split_mode split_mode; // how to split the model across multiple GPUs
 
         // the GPU that is used for the entire model when split_mode is LLAMA_SPLIT_MODE_NONE

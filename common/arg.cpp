@@ -2053,6 +2053,16 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_MAIN_GPU"));
     add_opt(common_arg(
+        {"-asf", "--auto-safety-factor"}, "N",
+        string_format("fraction of free VRAM to use for auto-optimization (n_gpu_layers = -2) (default: %.2f)", params.auto_safety_factor),
+        [](common_params & params, const std::string & value) {
+            params.auto_safety_factor = std::stof(value);
+            if (params.auto_safety_factor <= 0.0f || params.auto_safety_factor > 1.0f) {
+                throw std::invalid_argument("auto-safety-factor must be between 0 and 1");
+            }
+        }
+    ));
+    add_opt(common_arg(
         {"--check-tensors"},
         string_format("check model tensor data for invalid values (default: %s)", params.check_tensors ? "true" : "false"),
         [](common_params & params) {

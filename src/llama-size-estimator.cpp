@@ -173,7 +173,8 @@ int llama_size_estimator::calculate_optimal_gpu_layers(
         if (required <= available_vram) {
             LLAMA_LOG_INFO("%s: full offload possible (%.2f MiB required)\n",
                 __func__, required / 1024.0 / 1024.0);
-            return sizes.n_layers;
+            // Return n_layers + 1 to also offload the output layer
+            return sizes.n_layers + 1;
         }
     }
 
@@ -221,7 +222,8 @@ int llama_size_estimator::calculate_optimal_gpu_layers(
                 required / 1024.0 / 1024.0, moe_on_cpu / 1024.0 / 1024.0);
 
             n_cpu_moe = best_n_cpu_moe;
-            return sizes.n_layers;
+            // Return n_layers + 1 to also offload the output layer
+            return sizes.n_layers + 1;
         }
     }
 

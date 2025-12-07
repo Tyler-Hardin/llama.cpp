@@ -147,14 +147,18 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
         if (params.n_gpu_layers == -2 && !model.devices.empty()) {
             LLAMA_LOG_INFO("%s: auto-optimizing GPU layer offloading...\n", __func__);
 
+            // Validate that split_mode is LLAMA_SPLIT_MODE_LAYER for auto-optimization
+            if (params.split_mode != LLAMA_SPLIT_MODE_LAYER) {
+                LLAMA_LOG_ERROR("%s: auto-optimization requires --split-mode layer (currently: %d)\n", __func__, params.split_mode);
+                throw std::runtime_error("auto-optimization requires --split-mode layer");
+            }
+
             try {
                 // Estimate model sizes
                 auto size_estimate = llama_size_estimator::estimate_model_sizes(ml);
 
-                // Estimate KV cache size (need to assume context params)
-                // TODO: ideally we'd get these from context params, but they're not available yet
-                // Using conservative estimates for now
-                uint32_t est_n_ctx = 2048; // Conservative default
+                // Estimate KV cache size using actual context size from params
+                uint32_t est_n_ctx = params.n_ctx > 0 ? params.n_ctx : 2048; // Use actual n_ctx or conservative default
                 uint32_t est_n_seq_max = 1;
                 ggml_type type_k = GGML_TYPE_F16;
                 ggml_type type_v = GGML_TYPE_F16;
@@ -165,14 +169,25 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
                 // Estimate overhead
                 size_t overhead = llama_size_estimator::estimate_overhead(model.hparams, est_n_ctx);
 
-                // Query available VRAM on primary GPU
-                size_t available_vram = 0;
-                if (!model.devices.empty()) {
+                // Sum available VRAM across all GPUs
+                size_t total_free_vram = 0;
+                for (auto * dev : model.devices) {
                     size_t free_mem, total_mem;
-                    ggml_backend_dev_memory(model.devices[0], &free_mem, &total_mem);
-                    // Use 95% of free memory to leave some headroom
-                    available_vram = (free_mem * 95) / 100;
+                    ggml_backend_dev_memory(dev, &free_mem, &total_mem);
+                    total_free_vram += free_mem;
+                    LLAMA_LOG_INFO("%s: GPU %s: %.2f MiB free\n", __func__,
+                        ggml_backend_dev_name(dev), free_mem / 1024.0 / 1024.0);
                 }
+
+                LLAMA_LOG_INFO("%s: total free VRAM across %zu GPUs: %.2f MiB\n", __func__,
+                    model.devices.size(), total_free_vram / 1024.0 / 1024.0);
+
+                // Apply safety factor (configurable via --auto-safety-factor parameter)
+                float safety_factor = params.auto_safety_factor;
+                size_t available_vram = (size_t)(total_free_vram * safety_factor);
+
+                LLAMA_LOG_INFO("%s: applying safety factor %.2f%%, targeting %.2f MiB\n", __func__,
+                    safety_factor * 100.0f, available_vram / 1024.0 / 1024.0);
 
                 // Calculate optimal configuration
                 int n_cpu_moe = 0;
