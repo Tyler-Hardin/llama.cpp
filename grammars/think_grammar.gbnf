@@ -1,0 +1,19 @@
+# Pre-trigger (thinking-phase) grammar for reasoning models
+#
+# Applied only AFTER the start tag (<think>) has been generated and the reasoning
+# budget enters COUNTING. The first token the grammar sees is the trailing newline
+# of the start tag — the "\n"? handles this without requiring the <think> tags.
+#
+# The "</think>\n\n" at the end is included because it's generated while the
+# grammar is still active; the tool-call grammar takes over once reasoning ends.
+
+root  ::= "\n"? "GOAL: " line "APPROACH: " line "EDGE: " line "</think>\n\n" code
+line  ::= [^\n]+ "\n"
+code  ::= [\x09\x0A\x0D\x20-\x7E]+
+
+# If your model uses a different start tag (e.g. <think> without trailing \n),
+# remove the "\n"? prefix:
+# root  ::= "GOAL: " line "APPROACH: " line "EDGE: " line "</think>\n\n" code
+
+# Richer version for harder coding/agent tasks:
+# root  ::= "\n"? "GOAL: " line "STATE: " line "ALGO: " line "EDGE: " line "VERIFY: " line "</think>\n\n" code

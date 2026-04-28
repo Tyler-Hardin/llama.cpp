@@ -921,7 +921,7 @@ static void common_params_print_completion(common_params_context & ctx_arg) {
     printf("            COMPREPLY=( $(compgen -f -X '!*.gguf' -- \"$cur\") $(compgen -d -- \"$cur\") )\n");
     printf("            return 0\n");
     printf("            ;;\n");
-    printf("        --grammar-file)\n");
+    printf("        --grammar-file|--thinking-grammar-file)\n");
     printf("            COMPREPLY=( $(compgen -f -X '!*.gbnf' -- \"$cur\") $(compgen -d -- \"$cur\") )\n");
     printf("            return 0\n");
     printf("            ;;\n");
@@ -2099,6 +2099,14 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         "file to read grammar from",
         [](common_params & params, const std::string & value) {
             params.sampling.grammar = {COMMON_GRAMMAR_TYPE_USER, read_file(value)};
+        }
+    ).set_sampling());
+    add_opt(common_arg(
+        {"--thinking-grammar-file"}, "FNAME",
+        "file to read a pre-trigger (thinking phase) grammar from; only applied during reasoning blocks",
+        [](common_params & params, const std::string & value) {
+            params.sampling.pre_trigger_grammar = {COMMON_GRAMMAR_TYPE_USER, read_file(value)};
+            params.thinking_grammar_file = value;
         }
     ).set_sampling());
     add_opt(common_arg(

@@ -406,3 +406,39 @@ string ::= "\"" char* "\"" space
 ```
 
 </details>
+
+## Thinking (Pre-Trigger) Grammars
+
+For reasoning models that output `<think>...</think>` blocks (Qwen 3.6, GLM-5.1, DeepSeek-R1, etc.), you can use a **thinking grammar** to enforce structured reasoning *while also* using tools / function calling.
+
+### Why?
+
+Reasoning models often produce long, rambling `<think>` blocks that waste tokens and slow down agent loops. A small GBNF grammar applied only during the thinking phase forces dense, structured scratchpads (e.g. "GOAL: … APPROACH: … EDGE: …") while leaving tool calls and final answers completely unconstrained.
+
+### How it works
+
+The **pre-trigger grammar** is applied only while the model is inside a reasoning block (detected by the reasoning budget sampler's COUNTING state). Once `</think>` is output, the grammar hands off cleanly to the lazy tool-call grammar (or free-form output if no tools are present).
+
+### Usage
+
+```json
+{
+  "model": "qwen-3.6",
+  "messages": [...],
+  "tools": [{ "type": "function", "function": { ... } }],
+  "thinking_grammar": "root ::= think code\nthink ::= \"<think>\" \"\\n\" \"GOAL: \" line \"APPROACH: \" line \"EDGE: \" line \"</think>\" \"\\n\\n\"\nline ::= [^\\n]+ \"\\n\"\ncode ::= [\\x09\\x0A\\x0D\\x20-\\x7E]+"
+}
+```
+
+Or via CLI:
+```bash
+llama-server -m model.gguf --thinking-grammar-file grammars/think_grammar.gbnf
+```
+
+### Example grammar
+
+See [`grammars/think_grammar.gbnf`](think_grammar.gbnf) for the recommended grammar.
+
+The grammar is written naturally — it includes `<think>` and `</think>` tags as you'd expect. The sampler automatically aligns the grammar with the model's token stream by pre-feeding the start tag tokens when the reasoning phase begins.
+
+> **Note:** The `thinking_grammar` field is only honored when tools are also present. Without tools, use the regular `grammar` field instead.
