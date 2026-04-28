@@ -1063,8 +1063,15 @@ json oaicompat_chat_params_parse(
     }
     inputs.enable_thinking = opt.enable_thinking;
     if (!inputs.tools.empty() && inputs.tool_choice != COMMON_CHAT_TOOL_CHOICE_NONE) {
+        // When both a user-provided grammar and tools are present, route the
+        // user grammar to the pre-trigger (thinking-phase) grammar slot so it
+        // is applied only during the reasoning block. The tool-call grammar
+        // will take over after </think>.
         if (body.contains("grammar")) {
-            throw std::invalid_argument("Cannot use custom grammar constraints with tools.");
+            llama_params["thinking_grammar"] = body.at("grammar").get<std::string>();
+        }
+        if (body.contains("thinking_grammar")) {
+            llama_params["thinking_grammar"] = body.at("thinking_grammar").get<std::string>();
         }
         llama_params["parse_tool_calls"] = true;
     }

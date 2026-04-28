@@ -112,6 +112,7 @@ struct common_sampler {
     common_params_sampling params;
 
     struct llama_sampler * grmr;
+    struct llama_sampler * pre_grmr; // pre-trigger (thinking-phase) grammar: applied only during reasoning blocks
     struct llama_sampler * rbudget;
     struct llama_sampler * chain;
 
@@ -124,6 +125,7 @@ struct common_sampler {
     void reset() {
         prev.clear();
 
+        llama_sampler_reset(pre_grmr);
         llama_sampler_reset(chain);
     }
 
@@ -279,6 +281,26 @@ struct common_sampler * common_sampler_init(const struct llama_model * model, st
         }
     }
 
+    // Pre-trigger (thinking-phase) grammar — initialized independently from the
+    // main grammar. It is applied only while the reasoning budget is in the
+    // COUNTING state (inside a <think>...</think> block). This allows a
+    // structured thinking grammar to coexist with a lazy tool-call grammar.
+    llama_sampler * pre_grmr = nullptr;
+    const std::string & pre_grammar_str = common_grammar_value(params.pre_trigger_grammar);
+    if (!pre_grammar_str.empty()) {
+        if (pre_grammar_str.compare(0, 11, "%llguidance") == 0) {
+#ifdef LLAMA_USE_LLGUIDANCE
+            pre_grmr = llama_sampler_init_llg(vocab, "lark", pre_grammar_str.c_str());
+#else
+            GGML_ABORT("llguidance (cmake -DLLAMA_LLGUIDANCE=ON) is not enabled");
+#endif
+        } else {
+            // Pre-trigger grammars are always eager (non-lazy) — they actively
+            // constrain tokens during the thinking phase.
+            pre_grmr = llama_sampler_init_grammar(vocab, pre_grammar_str.c_str(), "root");
+        }
+    }
+
     // Feed generation prompt tokens to the grammar sampler so it advances past
     // tokens the template already placed in the prompt.
     // Only applies to output-format and tool-call grammars; user-supplied grammars must not be prefilled.
@@ -402,13 +424,14 @@ struct common_sampler * common_sampler_init(const struct llama_model * model, st
     }
 
     auto * result = new common_sampler {
-        /* .params  = */ params,
-        /* .grmr    = */ grmr,
-        /* .rbudget = */ rbudget,
-        /* .chain   = */ chain,
-        /* .prev    = */ ring_buffer<llama_token>(std::max(32, params.n_prev)),
-        /* .cur     = */ {},
-        /* .cur_p   = */ {},
+        /* .params   = */ params,
+        /* .grmr     = */ grmr,
+        /* .pre_grmr = */ pre_grmr,
+        /* .rbudget  = */ rbudget,
+        /* .chain    = */ chain,
+        /* .prev     = */ ring_buffer<llama_token>(std::max(32, params.n_prev)),
+        /* .cur      = */ {},
+        /* .cur_p    = */ {},
     };
 
     return result;
@@ -420,6 +443,7 @@ void common_sampler_free(struct common_sampler * gsmpl) {
     }
 
     llama_sampler_free(gsmpl->grmr);
+    llama_sampler_free(gsmpl->pre_grmr);
     llama_sampler_free(gsmpl->rbudget);
     llama_sampler_free(gsmpl->chain);
 
@@ -439,6 +463,19 @@ static bool grammar_should_apply(struct common_sampler * gsmpl) {
         return state == REASONING_BUDGET_IDLE || state == REASONING_BUDGET_DONE;
     }
     return true;
+}
+
+// Returns true when the pre-trigger (thinking-phase) grammar should be applied.
+// The pre-trigger grammar applies only while the reasoning budget is actively
+// counting (i.e. inside a <think>...</think> block), filling the gap where the
+// lazy tool-call grammar is dormant. Once reasoning ends (DONE or FORCING state),
+// we stop the pre-trigger grammar so the normal grammar can take over.
+static bool pre_grammar_should_apply(struct common_sampler * gsmpl) {
+    if (!gsmpl->pre_grmr || !gsmpl->rbudget) {
+        return false;
+    }
+    const auto state = common_reasoning_budget_get_state(gsmpl->rbudget);
+    return state == REASONING_BUDGET_COUNTING;
 }
 
 void common_sampler_accept(struct common_sampler * gsmpl, llama_token token, bool is_generated) {
@@ -466,6 +503,15 @@ void common_sampler_accept(struct common_sampler * gsmpl, llama_token token, boo
         }
     }
 
+    if (gsmpl->pre_grmr && pre_grammar_should_apply(gsmpl)) {
+        // Feed tokens to the pre-trigger (thinking) grammar so it advances
+        // through the thinking block structure.
+        // Note: the first token the grammar sees is the last token of the
+        // reasoning-budget start sequence (e.g. "\n" after "<think>").
+        // The grammar file must account for this with an optional "\n"? prefix.
+        llama_sampler_accept(gsmpl->pre_grmr, token);
+    }
+
     if (gsmpl->grmr && accept_grammar) {
         llama_sampler_accept(gsmpl->grmr, token);
     }
@@ -485,13 +531,14 @@ void common_sampler_reset(struct common_sampler * gsmpl) {
 
 struct common_sampler * common_sampler_clone(common_sampler * gsmpl) {
     return new common_sampler {
-        /* .params  = */ gsmpl->params,
-        /* .grmr    = */ llama_sampler_clone(gsmpl->grmr),
-        /* .rbudget = */ llama_sampler_clone(gsmpl->rbudget),
-        /* .chain   = */ llama_sampler_clone(gsmpl->chain),
-        /* .prev    = */ gsmpl->prev,
-        /* .cur     = */ gsmpl->cur,
-        /* .cur_p   = */ gsmpl->cur_p,
+        /* .params   = */ gsmpl->params,
+        /* .grmr     = */ llama_sampler_clone(gsmpl->grmr),
+        /* .pre_grmr = */ llama_sampler_clone(gsmpl->pre_grmr),
+        /* .rbudget  = */ llama_sampler_clone(gsmpl->rbudget),
+        /* .chain    = */ llama_sampler_clone(gsmpl->chain),
+        /* .prev     = */ gsmpl->prev,
+        /* .cur      = */ gsmpl->cur,
+        /* .cur_p    = */ gsmpl->cur_p,
     };
 }
 
@@ -588,7 +635,9 @@ llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_co
     // apply reasoning budget first
     llama_sampler_apply(rbudget, &cur_p);
 
-    if (grammar_first && grammar_should_apply(gsmpl)) {
+    if (pre_grammar_should_apply(gsmpl)) {
+        llama_sampler_apply(gsmpl->pre_grmr, &cur_p);
+    } else if (grammar_first && grammar_should_apply(gsmpl)) {
         llama_sampler_apply(grmr, &cur_p);
     }
 
@@ -621,6 +670,8 @@ llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_co
 
     if (grammar_should_apply(gsmpl)) {
         llama_sampler_apply(grmr,  &cur_p);
+    } else if (pre_grammar_should_apply(gsmpl)) {
+        llama_sampler_apply(gsmpl->pre_grmr, &cur_p);
     }
 
     llama_sampler_apply(chain, &cur_p);

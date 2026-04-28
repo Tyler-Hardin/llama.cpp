@@ -225,6 +225,13 @@ struct server_task {
         return ids;
     }
 
+    static task_params params_from_json_cmpl(
+            const llama_vocab * vocab,
+            const common_params & params_base,
+            const int n_ctx_slot,
+            const std::vector<llama_logit_bias> & logit_bias_eog,
+            const json & data);
+
     void add_child(int id_parent, int id_child) {
         server_task copy;
 

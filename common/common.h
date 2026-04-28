@@ -269,6 +269,7 @@ struct common_params_sampling {
     };
 
     common_grammar              grammar;      // optional grammar constraint (user / output-format / tool-calls)
+    common_grammar              pre_trigger_grammar;       // pre-trigger (thinking-phase) grammar - applied only during reasoning/thinking blocks
     bool                                grammar_lazy = false;
     std::vector<common_grammar_trigger> grammar_triggers; // optional triggers (for lazy grammars)
     std::set<llama_token>               preserved_tokens;
@@ -629,6 +630,7 @@ struct common_params {
     std::string public_path   = "";                                                                         // NOLINT
     std::string api_prefix    = "";                                                                         // NOLINT
     std::string chat_template = "";                                                                         // NOLINT
+    std::string thinking_grammar_file = "";  // file containing a GBNF grammar for structuring thinking/reasoning blocks
     bool use_jinja = true;                                                                                  // NOLINT
 
     // server CORS params
