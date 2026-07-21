@@ -22,6 +22,10 @@
   spirv-headers,
   nodejs,
   importNpmLock,
+  fetchFromGitHub,
+  nlohmann_json,
+  which,
+  python3,
   useBlas ?
     builtins.all (x: !x) [
       useCuda
@@ -38,6 +42,7 @@
   rocmGpuTargets ? builtins.concatStringsSep ";" rocmPackages.clr.gpuTargets,
   useVulkan ? false,
   useRpc ? false,
+  useZenDNN ? false,
   llamaVersion ? "0.0.0", # Arbitrary version, substituted by the flake
 
   # It's necessary to consistently use backendStdenv when building with CUDA support,
@@ -57,6 +62,13 @@ let
     strings
     ;
 
+  # ZenDNN is not available in nixpkgs, so we build it from source here.
+  # Placed before the stdenv shadow so we can use effectiveStdenv directly.
+  zendnn = if useZenDNN then import ./zendnn.nix {
+    inherit lib cmake fetchFromGitHub nlohmann_json which python3;
+    stdenv = effectiveStdenv;
+  } else null;
+
   stdenv = throw "Use effectiveStdenv instead";
 
   suffices =
@@ -65,7 +77,8 @@ let
     ++ lib.optionals useMetalKit [ "MetalKit" ]
     ++ lib.optionals useMpi [ "MPI" ]
     ++ lib.optionals useRocm [ "ROCm" ]
-    ++ lib.optionals useVulkan [ "Vulkan" ];
+    ++ lib.optionals useVulkan [ "Vulkan" ]
+    ++ lib.optionals useZenDNN [ "ZenDNN" ];
 
   pnameSuffix =
     strings.optionalString (suffices != [ ])
@@ -206,6 +219,7 @@ effectiveStdenv.mkDerivation (finalAttrs: {
       (cmakeBool "GGML_VULKAN" useVulkan)
       (cmakeBool "GGML_STATIC" enableStatic)
       (cmakeBool "GGML_RPC" useRpc)
+      (cmakeBool "GGML_ZENDNN" useZenDNN)
     ]
     ++ optionals useCuda [
       (
@@ -222,6 +236,10 @@ effectiveStdenv.mkDerivation (finalAttrs: {
     ++ optionals useMetalKit [
       (lib.cmakeFeature "CMAKE_C_FLAGS" "-D__ARM_FEATURE_DOTPROD=1")
       (cmakeBool "GGML_METAL_EMBED_LIBRARY" (!precompileMetalShaders))
+    ]
+    ++ optionals useZenDNN [
+      (cmakeFeature "ZENDNN_ROOT" "${zendnn}")
+      (cmakeBool "ZENDNN_ARCHIVE_LIB" true)
     ];
 
   # Environment variables needed for ROCm
@@ -245,7 +263,8 @@ effectiveStdenv.mkDerivation (finalAttrs: {
 
     # Configurations that are known to result in build failures. Can be
     # overridden by importing Nixpkgs with `allowBroken = true`.
-    broken = (useMetalKit && !effectiveStdenv.isDarwin);
+    broken = (useMetalKit && !effectiveStdenv.isDarwin)
+      || (useZenDNN && !(effectiveStdenv.isx86_64 && effectiveStdenv.isLinux));
 
     description = "Inference of LLaMA model in pure C/C++${descriptionSuffix}";
     homepage = "https://github.com/ggml-org/llama.cpp/";

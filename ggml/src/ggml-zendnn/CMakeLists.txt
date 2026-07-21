@@ -5,12 +5,14 @@ if (NOT DEFINED ZENDNN_ROOT OR ZENDNN_ROOT STREQUAL "")
     set(ZENDNN_ROOT "$ENV{ZENDNN_ROOT}")
 endif()
 
-if (BUILD_SHARED_LIBS)
-    set(ZENDNN_SHARED_LIB ON)
-    set(ZENDNN_ARCHIVE_LIB OFF)
-else()
-    set(ZENDNN_SHARED_LIB OFF)
-    set(ZENDNN_ARCHIVE_LIB ON)
+if (NOT DEFINED ZENDNN_ARCHIVE_LIB)
+    if (BUILD_SHARED_LIBS)
+        set(ZENDNN_SHARED_LIB ON)
+        set(ZENDNN_ARCHIVE_LIB OFF)
+    else()
+        set(ZENDNN_SHARED_LIB OFF)
+        set(ZENDNN_ARCHIVE_LIB ON)
+    endif()
 endif()
 
 # Download and build ZenDNN if not provided
@@ -73,12 +75,24 @@ if (ZENDNN_SHARED_LIB)
     target_link_directories(ggml-zendnn PRIVATE ${ZENDNN_ROOT}/zendnnl/lib)
     target_link_libraries(ggml-zendnn PRIVATE zendnnl)
 elseif (ZENDNN_ARCHIVE_LIB)
+    # Determine actual library directories for ZenDNN dependencies.
+    # Don't use CMAKE_INSTALL_LIBDIR as it may be overridden by Nix.
+    if(IS_DIRECTORY "${ZENDNN_ROOT}/deps/aoclutils/lib64")
+        set(ZENDNN_AOCLUTILS_LIBDIR "${ZENDNN_ROOT}/deps/aoclutils/lib64")
+    else()
+        set(ZENDNN_AOCLUTILS_LIBDIR "${ZENDNN_ROOT}/deps/aoclutils/lib")
+    endif()
+    if(IS_DIRECTORY "${ZENDNN_ROOT}/deps/onednn/lib64")
+        set(ZENDNN_ONEDNN_LIBDIR "${ZENDNN_ROOT}/deps/onednn/lib64")
+    else()
+        set(ZENDNN_ONEDNN_LIBDIR "${ZENDNN_ROOT}/deps/onednn/lib")
+    endif()
     target_link_libraries(ggml-zendnn PRIVATE
         ${ZENDNN_ROOT}/zendnnl/lib/libzendnnl_archive.a
-        ${ZENDNN_ROOT}/deps/aoclutils/${CMAKE_INSTALL_LIBDIR}/libaoclutils.a
-        ${ZENDNN_ROOT}/deps/aoclutils/${CMAKE_INSTALL_LIBDIR}/libau_cpuid.a
+        ${ZENDNN_AOCLUTILS_LIBDIR}/libaoclutils.a
+        ${ZENDNN_AOCLUTILS_LIBDIR}/libau_cpuid.a
         ${ZENDNN_ROOT}/deps/aocldlp/lib/libaocl-dlp.a
-        ${ZENDNN_ROOT}/deps/onednn/${CMAKE_INSTALL_LIBDIR}/libdnnl.a
+        ${ZENDNN_ONEDNN_LIBDIR}/libdnnl.a
         ${ZENDNN_ROOT}/deps/libxsmm/lib/libxsmm.a
         ${ZENDNN_ROOT}/deps/libxsmm/lib/libxsmmext.a
         ${ZENDNN_ROOT}/deps/libxsmm/lib/libxsmmnoblas.a)

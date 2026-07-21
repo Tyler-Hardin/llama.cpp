@@ -164,6 +164,8 @@
               }
               // lib.optionalAttrs (system == "x86_64-linux") {
                 rocm = config.legacyPackages.llamaPackagesRocm.llama-cpp;
+                zendnn = config.packages.default.override { useZenDNN = true; };
+                cuda-zendnn = config.legacyPackages.llamaPackagesCuda.llama-cpp.override { useZenDNN = true; };
               };
 
             # Packages exposed in `.#checks` will be built by the CI and by
