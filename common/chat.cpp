@@ -2130,7 +2130,7 @@ static common_chat_params common_chat_params_init_minimax_m3(const common_chat_t
     data.format             = COMMON_CHAT_FORMAT_PEG_NATIVE;
     data.supports_thinking  = true;
     data.thinking_start_tag = "<mm:think>";
-    data.thinking_end_tag   = "</mm:think>";
+    data.thinking_end_tags  = {"</mm:think>"};
 
     // M3 prefixes every tool tag with the namespace token "]<]minimax[>[";
     // params use the parameter name as the tag (<file_path>...</file_path>).
