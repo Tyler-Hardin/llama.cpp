@@ -516,7 +516,7 @@ task_params server_task::params_from_json_cmpl(
             params.sampling.reasoning_budget_start = common_tokenize(vocab, start_tag, false, true);
         }
         if (!end_tag.empty()) {
-            params.sampling.reasoning_budget_end = common_tokenize(vocab, end_tag, false, true);
+            params.sampling.reasoning_budget_end = { common_tokenize(vocab, end_tag, false, true) };
             params.sampling.reasoning_budget_forced = common_tokenize(vocab, message + end_tag, false, true);
 
             SRV_DBG("reasoning budget: tokens=%d, generation_prompt='%s', start=%zu toks, end=%zu toks, forced=%zu toks\n",
